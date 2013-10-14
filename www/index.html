@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8" />
+		<title></title>
+		<script src="http://code.jquery.com/jquery-2.0.3.min.js"></script>
+		<script src="http://ec2-54-246-11-246.eu-west-1.compute.amazonaws.com:8081/socket.io/socket.io.js"></script>
+		<script>
+			(function($) {
+				function Audio(options) {
+					var _this = this,
+						isPlaying = false;
+					var audioContext, preAudioBuffer = false;
+					
+					this.fileBuffer = {
+						played: 0,
+						buffer: false,
+						download: {
+							full: '',
+							part: ''
+						},
+						current: {
+							full: '',
+							info: {}
+						}
+					};
+					
+					this.isPlaying = function() {
+						return isPlaying;
+					};
+					this.isWebAudioAPISupported = function() {
+						audioContext = window.webkitAudioContext || window.mozAudioContext;
+						audioContext = window.AudioContext || audioContext;
+						window.AudioContext = audioContext;
+						return audioContext ? true : false;
+					};
+					this.getAudioContext = function() {
+						if(_this.isWebAudioAPISupported()) {
+							audioContext = new AudioContext();
+							return audioContext;
+						} else {
+							return false;
+						};
+					};
+					this.getAudioDuration = function(data) {
+						var deferred = $.Deferred();
+						if(audioContext) {
+							if(typeof(data) == 'string') {
+								data = _this.string2ArrayBuffer(data);
+							};
+							audioContext.decodeAudioData(data, function(audioBuffer) {
+								deferred.resolve(audioBuffer.duration);
+							}, function() {
+								// error
+							});
+						};
+						return deferred.promise();
+					};
+					this.getAudioDownloadPartDuration = function() {
+						return _this.getAudioDuration(_this.fileBuffer.download.part);
+					};
+					
+					this.playAudioDownloadFull = function() {
+						console.log('full');
+						downloadComplete();
+						//return play(_this.fileBuffer.current.full, _this.fileBuffer.played);
+						return play();
+					};
+					this.playAudioDownloadPart = function() {
+						console.log('part');
+						downloadPartComplete();
+						//return play(_this.fileBuffer.download.full, _this.fileBuffer.played);
+						return play();
+					};
+					
+					this.string2ArrayBuffer = function(string) {
+						if(typeof(string) == 'string') {
+							var stringLength = string.length,
+								buffer = new ArrayBuffer(stringLength * 2),
+								bufferView = new Uint8Array(buffer);
+							for(var i = 0; i < stringLength; i++) {
+								bufferView[i] = string.charCodeAt(i);
+							};
+							return buffer;
+						};
+						return new ArrayBuffer();
+					};
+					
+					function downloadComplete() {
+						_this.fileBuffer.current.full = _this.fileBuffer.download.full;
+						_this.fileBuffer.download = {full: '', part: ''};
+					};
+					function downloadPartComplete() {
+						_this.fileBuffer.download.part = '';
+					};
+					function play(buffer, start) {
+						buffer = buffer ? buffer : _this.fileBuffer.download.full;
+						start = start ? start : _this.fileBuffer.played;
+						console.log('play', start);
+						var arrayBuffer, source, deferred = $.Deferred();
+						onPlayStart(deferred.promise());
+						if(preAudioBuffer) {
+							console.log('pre');
+							deferred.resolve(preAudioBuffer.duration);
+							source = audioContext.createBufferSource();
+							source.buffer = preAudioBuffer;
+							source.onended = onPlayEnd;
+							source.connect(audioContext.destination);
+							source.start(start, start - 0);
+							preAudioBuffer = false;
+							preloadAudioBuffer();
+							console.log(preAudioBuffer);
+							return true;
+						};
+						var arrayBuffer = _this.string2ArrayBuffer(buffer);
+						audioContext.decodeAudioData(arrayBuffer, function(audioBuffer) {
+							deferred.resolve(audioBuffer.duration);
+							source = audioContext.createBufferSource();
+							source.buffer = audioBuffer;
+							source.onended = onPlayEnd;
+							source.connect(audioContext.destination);
+							source.start(start, start - 0);
+							preloadAudioBuffer();
+							console.log(audioBuffer);
+						}, function() {
+							console.log('error');
+						});
+						//onPlayStart(deferred.promise());
+						return deferred.promise();
+					};
+					function playDownload() {
+						return play(_this.fileBuffer.download.full, _this.fileBuffer.played);
+					};
+					function onPlayStart(promise) {
+						console.log('playstart');
+						isPlaying = true;
+						$.when(promise).then(function(duration) {
+							if(duration) {
+								_this.fileBuffer.played = duration;
+							};
+							console.log('inc duration',duration,_this.fileBuffer.played);
+						});
+					};
+					function onPlayEnd() {
+						console.log('playend', _this.fileBuffer.played);
+						isPlaying = false;
+						if(_this.fileBuffer.played >= _this.fileBuffer.current.info.duration) {
+							return;
+						};
+						if(preAudioBuffer) {
+							play();
+							return;
+						};
+						var fileBuffer = _this.fileBuffer,
+							download = fileBuffer.download,
+							current = fileBuffer.current,
+							info = current.info;
+						if(current.full.length) {
+							play(current.full, fileBuffer.played);
+						} else if(download.full.length >= info.len) {
+							downloadComplete();
+							play(current.full, fileBuffer.played)
+						} else {
+							if(download.part.length >= (info.len / info.duration) * 10) {
+								downloadPartComplete();
+								play(download.full, fileBuffer.played);
+							};
+						};
+					};
+					function preloadAudioBuffer() {
+						setTimeout(function() {
+							var buffer,
+								data = _this.fileBuffer.download.full;
+							if(typeof(data) == 'object') {
+								arrayBuffer = data;
+							} else if(typeof(string) == 'string') {
+								arrayBuffer = _this.string2ArrayBuffer(data);
+							} else {
+								arrayBuffer = _this.string2ArrayBuffer(data);
+							};
+							audioContext.decodeAudioData(arrayBuffer, function(audioBuffer) {
+								console.log('preBuffer');
+								preAudioBuffer = audioBuffer;
+								if(isPlaying) {
+									_this.fileBuffer.download.part = '';
+								} else {
+									preAudioBuffer = false;
+								};
+							}, function() {
+								preAudioBuffer = false;
+							});
+						}, 6000);
+					};
+					function playPreloadAudio() {
+						
+					};
+				};
+				
+				var audio = new Audio(),
+					audioContext = audio.getAudioContext();
+				var socket = io.connect('http://ec2-54-246-11-246.eu-west-1.compute.amazonaws.com:8081');
+					
+				$(function() {
+						
+					socket.on('connect', function() {
+						socket.emit('init', {});
+						if(location.hash) {
+							socket.emit('subscribe', {id: location.hash.substr(1)});
+						};
+					});
+					socket.on('init', function(data) {
+						$('body').append('<span>'+data.id+'<span>');
+					});
+					
+					socket.on('fileInfo', function(data) {
+						audio.fileBuffer.current.info = data;
+					});
+					socket.on('file', function(data) {
+						var fileBuffer = audio.fileBuffer,
+							download = fileBuffer.download,
+							current = fileBuffer.current,
+							info = current.info;
+						download.full += data.buffer;
+						if(download.full.length >= info.len) {
+							if(!audio.isPlaying()) {
+								audio.playAudioDownloadFull();
+							};
+						} else {
+							download.part += data.buffer;
+							if(download.part.length >= (info.len / info.duration) * 11) {
+								if(!audio.isPlaying()) {
+									audio.playAudioDownloadPart();
+								};
+							};
+						};
+					});
+				
+					$('html').on('drop', function(e) {
+						e.preventDefault();
+						e.stopPropagation();
+						var file = e.originalEvent.dataTransfer.files[0];
+						var reader = new FileReader();
+						reader.onload = function(r) {
+							var result = r.target.result,
+								step = 1024,
+								resultPart,
+								resultLength = result.length;
+							var promise = audio.getAudioDuration(result);
+							$.when(promise).then(function(duration) {
+								socket.emit('fileInfo', {
+									file: file,
+									duration: duration,
+									tags: {},
+									len: resultLength
+								});
+								for(var i = 0; i <= resultLength; i = i + step) {
+									resultPart = result.substr(i, step);
+									if(i + step > resultLength) {
+										resultPart = result.substr(i);
+									};
+									socket.emit('file', {
+										buffer: resultPart
+									});
+								};
+								socket.emit('fileEnd', {});
+							});
+						};
+						reader.readAsBinaryString(file);
+					}).on('dragover', function(e) {
+						e.stopPropagation();
+						e.preventDefault();
+						e.originalEvent.dataTransfer.dropEffect = 'copy';
+					});
+				});
+			})(jQuery);
+		</script>
+	</head>
+	<body>
+	</body>
+</html>
