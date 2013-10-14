@@ -14,7 +14,6 @@
 					
 					this.fileBuffer = {
 						played: 0,
-						buffer: false,
 						download: {
 							full: '',
 							part: ''
@@ -51,25 +50,20 @@
 							audioContext.decodeAudioData(data, function(audioBuffer) {
 								deferred.resolve(audioBuffer.duration);
 							}, function() {
-								// error
+								console.log('Audio: error getAudioDuration');
 							});
 						};
 						return deferred.promise();
 					};
-					this.getAudioDownloadPartDuration = function() {
-						return _this.getAudioDuration(_this.fileBuffer.download.part);
-					};
 					
 					this.playAudioDownloadFull = function() {
-						console.log('full');
+						console.log('Audio: play full');
 						downloadComplete();
-						//return play(_this.fileBuffer.current.full, _this.fileBuffer.played);
 						return play();
 					};
 					this.playAudioDownloadPart = function() {
-						console.log('part');
+						console.log('Audio: play part');
 						downloadPartComplete();
-						//return play(_this.fileBuffer.download.full, _this.fileBuffer.played);
 						return play();
 					};
 					
@@ -94,69 +88,51 @@
 						_this.fileBuffer.download.part = '';
 					};
 					function play(buffer, start) {
-						buffer = buffer ? buffer : _this.fileBuffer.download.full;
-						start = start ? start : _this.fileBuffer.played;
-						console.log('play', start);
+						var fileBuffer = _this.fileBuffer;
+						buffer = buffer ? buffer : fileBuffer.download.full;
+						start = start ? start : fileBuffer.played;
 						var arrayBuffer, source, deferred = $.Deferred();
+							arrayBuffer = _this.string2ArrayBuffer(buffer);
+						console.log('Audio: play', start);
 						onPlayStart(deferred.promise());
-						if(preAudioBuffer) {
-							console.log('pre');
-							deferred.resolve(preAudioBuffer.duration);
-							source = audioContext.createBufferSource();
-							source.buffer = preAudioBuffer;
-							source.onended = onPlayEnd;
-							source.connect(audioContext.destination);
-							source.start(start, start - 0);
-							preAudioBuffer = false;
-							preloadAudioBuffer();
-							console.log(preAudioBuffer);
-							return true;
-						};
-						var arrayBuffer = _this.string2ArrayBuffer(buffer);
 						audioContext.decodeAudioData(arrayBuffer, function(audioBuffer) {
 							deferred.resolve(audioBuffer.duration);
 							source = audioContext.createBufferSource();
 							source.buffer = audioBuffer;
 							source.onended = onPlayEnd;
 							source.connect(audioContext.destination);
-							source.start(start, start - 0);
+							source.start(start, start);
 							preloadAudioBuffer();
 							console.log(audioBuffer);
 						}, function() {
-							console.log('error');
+							console.log('Audio: error play');
 						});
-						//onPlayStart(deferred.promise());
 						return deferred.promise();
 					};
-					function playDownload() {
-						return play(_this.fileBuffer.download.full, _this.fileBuffer.played);
-					};
 					function onPlayStart(promise) {
-						console.log('playstart');
+						console.log('Audio: playstart');
 						isPlaying = true;
 						$.when(promise).then(function(duration) {
 							if(duration) {
 								_this.fileBuffer.played = duration;
 							};
-							console.log('inc duration',duration,_this.fileBuffer.played);
 						});
 					};
 					function onPlayEnd() {
-						console.log('playend', _this.fileBuffer.played);
+						console.log('Audio: playend');
 						isPlaying = false;
-						if(_this.fileBuffer.played >= _this.fileBuffer.current.info.duration) {
-							return;
-						};
-						if(preAudioBuffer) {
-							play();
-							return;
-						};
 						var fileBuffer = _this.fileBuffer,
 							download = fileBuffer.download,
 							current = fileBuffer.current,
 							info = current.info;
-						if(current.full.length) {
-							play(current.full, fileBuffer.played);
+						if(fileBuffer.played >= info.duration) { // конец файла. останавливаемся
+							return;
+						};
+						if(preAudioBuffer) { // есть заранее декодированный кусок
+							return playAudioBuffer(); // играем его
+						};
+						if(current.full.length) { // если файл есть весь
+							play(current.full, fileBuffer.played); // играем весь
 						} else if(download.full.length >= info.len) {
 							downloadComplete();
 							play(current.full, fileBuffer.played)
@@ -169,15 +145,7 @@
 					};
 					function preloadAudioBuffer() {
 						setTimeout(function() {
-							var buffer,
-								data = _this.fileBuffer.download.full;
-							if(typeof(data) == 'object') {
-								arrayBuffer = data;
-							} else if(typeof(string) == 'string') {
-								arrayBuffer = _this.string2ArrayBuffer(data);
-							} else {
-								arrayBuffer = _this.string2ArrayBuffer(data);
-							};
+							var arrayBuffer = _this.string2ArrayBuffer(_this.fileBuffer.download.full);
 							audioContext.decodeAudioData(arrayBuffer, function(audioBuffer) {
 								console.log('preBuffer');
 								preAudioBuffer = audioBuffer;
@@ -191,9 +159,25 @@
 							});
 						}, 6000);
 					};
-					function playPreloadAudio() {
-						
-					};
+					function playAudioBuffer() {
+						var deferred = $.Deferred(),
+							start = _this.fileBuffer.played,
+							duration = preAudioBuffer ? preAudioBuffer.duration : 0;
+						if(duration) {
+							console.log('pre');
+							onPlayStart(deferred.promise());
+							deferred.resolve(duration);
+							var source = audioContext.createBufferSource();
+								source.buffer = preAudioBuffer;
+								source.onended = onPlayEnd;
+								source.connect(audioContext.destination);
+								source.start(start, start);
+							preAudioBuffer = false;
+							preloadAudioBuffer();
+							console.log(preAudioBuffer);
+							return true;
+						};
+					}
 				};
 				
 				var audio = new Audio(),
@@ -203,16 +187,20 @@
 				$(function() {
 						
 					socket.on('connect', function() {
+						console.log('Socket: connect');
 						socket.emit('init', {});
 						if(location.hash) {
+							console.log('Socket: subscribe');
 							socket.emit('subscribe', {id: location.hash.substr(1)});
 						};
 					});
 					socket.on('init', function(data) {
+						console.log('Socket: init');
 						$('body').append('<span>'+data.id+'<span>');
 					});
 					
 					socket.on('fileInfo', function(data) {
+						console.log('Socket: file info');
 						audio.fileBuffer.current.info = data;
 					});
 					socket.on('file', function(data) {
@@ -221,15 +209,15 @@
 							current = fileBuffer.current,
 							info = current.info;
 						download.full += data.buffer;
-						if(download.full.length >= info.len) {
-							if(!audio.isPlaying()) {
-								audio.playAudioDownloadFull();
+						if(download.full.length >= info.len) { // если вдруг загрузилось все
+							if(!audio.isPlaying()) { // и ничего не играет
+								audio.playAudioDownloadFull(); // играем все
 							};
 						} else {
 							download.part += data.buffer;
-							if(download.part.length >= (info.len / info.duration) * 11) {
-								if(!audio.isPlaying()) {
-									audio.playAudioDownloadPart();
+							if(download.part.length >= (info.len / info.duration) * 11) { // если загрузилось ~ 10 секунд (очень неточно)
+								if(!audio.isPlaying()) { // и ничего не играет
+									audio.playAudioDownloadPart(); // играем кусок
 								};
 							};
 						};
@@ -238,6 +226,7 @@
 					$('html').on('drop', function(e) {
 						e.preventDefault();
 						e.stopPropagation();
+						
 						var file = e.originalEvent.dataTransfer.files[0];
 						var reader = new FileReader();
 						reader.onload = function(r) {
@@ -245,9 +234,9 @@
 								step = 1024,
 								resultPart,
 								resultLength = result.length;
-							var promise = audio.getAudioDuration(result);
+							var promise = audio.getAudioDuration(result); // ждем длительность
 							$.when(promise).then(function(duration) {
-								socket.emit('fileInfo', {
+								socket.emit('fileInfo', { // отправляем информацию
 									file: file,
 									duration: duration,
 									tags: {},
@@ -258,14 +247,14 @@
 									if(i + step > resultLength) {
 										resultPart = result.substr(i);
 									};
-									socket.emit('file', {
+									socket.emit('file', { // отправляем очередной кусок
 										buffer: resultPart
 									});
 								};
-								socket.emit('fileEnd', {});
+								socket.emit('fileEnd', {}); // сигнализируем конец файла
 							});
 						};
-						reader.readAsBinaryString(file);
+						reader.readAsBinaryString(file); // читаем как есть
 					}).on('dragover', function(e) {
 						e.stopPropagation();
 						e.preventDefault();
